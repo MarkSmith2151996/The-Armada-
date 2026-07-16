@@ -46,8 +46,11 @@ def _tool_content(result: dict[str, Any]) -> Any:
     return response
 
 
-def _custodian_rows(sql: str) -> list[dict[str, Any]]:
-    result = call_tool(settings, "armada_query", {"sql": sql, "max_rows": 2000})
+def _custodian_rows(sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
+    arguments: dict[str, Any] = {"sql": sql, "max_rows": 2000}
+    if params is not None:
+        arguments["params"] = params
+    result = call_tool(settings, "armada_query", arguments)
     if not result.get("ok"):
         raise RuntimeError(result.get("error") or str(result.get("response")))
     payload = _tool_content(result)
@@ -61,24 +64,45 @@ def _batches(items: list[tuple[str, list[Any]]], size: int = 100) -> list[list[t
     return [items[index : index + size] for index in range(0, len(items), size)]
 
 
-def sync_from_custodian() -> dict[str, int]:
+def sync_from_custodian(dispatch_id: str | None = None) -> dict[str, int]:
     edge_store = SqldStore(settings)
     edge_store.ensure_schema()
-    workers = _custodian_rows(
-        "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
-        "FROM agent_instructions WHERE status = 'open' AND agent_name != 'armada-foreman' ORDER BY id"
-    )
-    foremen = _custodian_rows(
-        "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
-        "FROM agent_instructions WHERE status = 'open' AND agent_name = 'armada-foreman' ORDER BY id"
-    )
-    dispatches = _custodian_rows(
-        "SELECT dispatch_id, total_instructions, completed, failed, status, created_at FROM armada_dispatches ORDER BY dispatch_id"
-    )
+    if dispatch_id is None:
+        workers = _custodian_rows(
+            "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
+            "FROM agent_instructions WHERE status = 'open' AND agent_name != 'armada-foreman' ORDER BY id"
+        )
+        foremen = _custodian_rows(
+            "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
+            "FROM agent_instructions WHERE status = 'open' AND agent_name = 'armada-foreman' ORDER BY id"
+        )
+        dispatches = _custodian_rows(
+            "SELECT dispatch_id, total_instructions, completed, failed, status, created_at FROM armada_dispatches ORDER BY dispatch_id"
+        )
+        local_open_workers = edge_store.query(
+            "SELECT id FROM instructions WHERE status = 'open' AND agent_name != 'armada-foreman'"
+        )
+    else:
+        workers = _custodian_rows(
+            "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
+            "FROM agent_instructions WHERE status = 'open' AND agent_name != 'armada-foreman' AND dispatch_id = %s ORDER BY id",
+            [dispatch_id],
+        )
+        foremen = _custodian_rows(
+            "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
+            "FROM agent_instructions WHERE status = 'open' AND agent_name = 'armada-foreman' AND dispatch_id = %s ORDER BY id",
+            [dispatch_id],
+        )
+        dispatches = _custodian_rows(
+            "SELECT dispatch_id, total_instructions, completed, failed, status, created_at "
+            "FROM armada_dispatches WHERE dispatch_id = %s",
+            [dispatch_id],
+        )
+        local_open_workers = edge_store.query(
+            "SELECT id FROM instructions WHERE status = 'open' AND agent_name != 'armada-foreman' AND dispatch_id = ?",
+            [dispatch_id],
+        )
     remote_worker_ids = {instruction["id"] for instruction in workers}
-    local_open_workers = edge_store.query(
-        "SELECT id FROM instructions WHERE status = 'open' AND agent_name != 'armada-foreman'"
-    )
     stale_worker_ids = [row["id"] for row in local_open_workers if row["id"] not in remote_worker_ids]
     for stale_batch in [stale_worker_ids[index : index + 500] for index in range(0, len(stale_worker_ids), 500)]:
         placeholders = ", ".join("?" for _ in stale_batch)
@@ -408,9 +432,10 @@ if __name__ == "__main__":
         help="serve MCP over HTTP so the process can run without a terminal",
     )
     parser.add_argument("--port", type=int, default=8401)
+    parser.add_argument("--dispatch", help="sync only instructions and dispatch metadata for this dispatch ID")
     args = parser.parse_args()
     if args.sync_from_custodian:
-        print(json.dumps(sync_from_custodian(), sort_keys=True))
+        print(json.dumps(sync_from_custodian(dispatch_id=args.dispatch), sort_keys=True))
     elif args.sync_to_custodian:
         print(json.dumps(sync_to_custodian(), sort_keys=True))
     elif args.daemon:

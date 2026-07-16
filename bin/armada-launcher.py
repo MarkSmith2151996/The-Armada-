@@ -188,6 +188,13 @@ def fly(client: CustodianClient) -> None:
         "model": FOREMAN_MODEL,
         "node_assignments": {f"F{index + 1}": len(worker_ids) for index, worker_ids in enumerate(assignments)},
     })
+    for start in range(0, len(workers), 100):
+        worker_ids = workers[start:start + 100]
+        values = ", ".join(sql_quote(worker_id) for worker_id in worker_ids)
+        client.tool("armada_query", {
+            "sql": "UPDATE agent_instructions SET dispatch_id = "
+            f"{sql_quote(dispatch_id)} WHERE id IN ({values})",
+        })
     foremen: list[tuple[str, int, int]] = []
     for index, worker_ids in enumerate(assignments):
         result = client.tool("submit_agent_instruction", {
@@ -200,7 +207,7 @@ def fly(client: CustodianClient) -> None:
         if not foreman_id:
             raise RuntimeError(f"Custodian did not return a foreman ID: {result}")
         foremen.append((str(foreman_id), 9222 + index, len(worker_ids)))
-    run_sync("--sync-from-custodian")
+    run_sync("--sync-from-custodian", dispatch_id=dispatch_id)
     print("\nForemen created:")
     for index, (foreman_id, port, count) in enumerate(foremen, start=1):
         print(f"F{index}: {foreman_id} (CDP {port}, {count} workers)")
@@ -209,8 +216,11 @@ def fly(client: CustodianClient) -> None:
         print(f"opencode --agent armada-foreman --model {FOREMAN_MODEL}")
 
 
-def run_sync(flag: str) -> dict[str, Any]:
-    result = subprocess.run([node_python(), str(NODE_SERVER), flag], cwd=NODE_DIR, text=True, capture_output=True, check=False)
+def run_sync(flag: str, dispatch_id: str | None = None) -> dict[str, Any]:
+    command = [node_python(), str(NODE_SERVER), flag]
+    if dispatch_id is not None:
+        command.extend(["--dispatch", dispatch_id])
+    result = subprocess.run(command, cwd=NODE_DIR, text=True, capture_output=True, check=False)
     if result.stderr:
         print(result.stderr, file=sys.stderr, end="")
     if result.returncode:
