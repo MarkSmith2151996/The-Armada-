@@ -1,0 +1,7 @@
+=== Mac Sliding Window Setup ===
+Binary: /Users/tubslamanna/projects/opencode/packages/opencode/dist/opencode-darwin-arm64/bin/opencode
+Foreman: /Users/tubslamanna/.config/opencode/agents/armada-foreman-sliding-window.md
+Worker: /Users/tubslamanna/.config/opencode/agents/brand-outreach-worker.md
+Branch: grouped-task-dispatch
+Commit: ed80101d4
+Date: 2026-07-01T17:18:50Z

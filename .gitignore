@@ -1,0 +1,35 @@
+# Large binaries
+node.db
+obscura
+obscura-worker
+obscura-aarch64-macos.tar.gz
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# sqld data
+node.sqld/
+
+# Logs
+*.log
+
+# Secrets
+node-mcp-server/search_keys.json
+node-mcp-server/config.json
+
+# Runtime
+*.pid
+
+# Diagnostics / ephemeral
+ee-603-diagnostics/
+ee-603-phase2/
+flight-logs/
+run-results/
+harvests/
+logs/
+searxng/
+
+# Large JSON cache
+node-mcp-server/instructions.json
