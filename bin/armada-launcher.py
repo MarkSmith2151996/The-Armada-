@@ -104,7 +104,11 @@ class CustodianClient:
         content = response.get("result", {}).get("content", [])
         for block in content:
             if block.get("type") == "text":
-                return json.loads(block["text"])
+                text = block["text"]
+                try:
+                    return json.loads(text)
+                except (json.JSONDecodeError, ValueError):
+                    return {"text": text}
         return response.get("result", {})
 
     def query(self, sql: str) -> list[dict[str, Any]]:
