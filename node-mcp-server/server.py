@@ -42,7 +42,11 @@ def _tool_content(result: dict[str, Any]) -> Any:
     content = response.get("result", {}).get("content", []) if isinstance(response, dict) else []
     for block in content:
         if block.get("type") == "text":
-            return json.loads(block["text"])
+            text = block["text"]
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return {"text": text}
     return response
 
 
@@ -85,17 +89,17 @@ def sync_from_custodian(dispatch_id: str | None = None) -> dict[str, int]:
     else:
         workers = _custodian_rows(
             "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
-            "FROM agent_instructions WHERE status = 'open' AND agent_name != 'armada-foreman' AND dispatch_id = %s ORDER BY id",
+            "FROM agent_instructions WHERE status = 'open' AND agent_name != 'armada-foreman' AND dispatch_id = ? ORDER BY id",
             [dispatch_id],
         )
         foremen = _custodian_rows(
             "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
-            "FROM agent_instructions WHERE status = 'open' AND agent_name = 'armada-foreman' AND dispatch_id = %s ORDER BY id",
+            "FROM agent_instructions WHERE status = 'open' AND agent_name = 'armada-foreman' AND dispatch_id = ? ORDER BY id",
             [dispatch_id],
         )
         dispatches = _custodian_rows(
             "SELECT dispatch_id, total_instructions, completed, failed, status, created_at "
-            "FROM armada_dispatches WHERE dispatch_id = %s",
+            "FROM armada_dispatches WHERE dispatch_id = ?",
             [dispatch_id],
         )
         local_open_workers = edge_store.query(

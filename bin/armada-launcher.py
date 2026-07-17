@@ -107,7 +107,7 @@ class CustodianClient:
                 text = block["text"]
                 try:
                     return json.loads(text)
-                except (json.JSONDecodeError, ValueError):
+                except json.JSONDecodeError:
                     return {"text": text}
         return response.get("result", {})
 
