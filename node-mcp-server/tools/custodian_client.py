@@ -73,14 +73,31 @@ def _post(settings: Settings, payload: dict[str, Any]) -> tuple[requests.Respons
         json=payload,
         headers=headers,
         timeout=settings.request_timeout_seconds,
+        stream=True,
     )
     session_id = response.headers.get("Mcp-Session-Id")
     if session_id:
         _SESSION_ID = session_id
+
+    data_lines: list[str] = []
     try:
-        parsed: Any = _parse_response(response.text)
+        for line in response.iter_lines(decode_unicode=True):
+            if line and line.startswith("data:"):
+                data_lines.append(line[5:].strip())
+            elif not line and data_lines:
+                break
     except Exception:
-        parsed = response.text[:2000]
+        pass
+    finally:
+        response.close()
+
+    if data_lines:
+        parsed: Any = json.loads("\n".join(data_lines))
+    else:
+        try:
+            parsed = json.loads(response.text) if hasattr(response, "_content") and response._content else None
+        except Exception:
+            parsed = None
     return response, parsed
 
 
