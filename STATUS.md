@@ -24,9 +24,11 @@
 
 - `node-mcp-server/server.py`: MCP server, durable instruction cache, and Custodian sync CLI.
 - `bin/armada-launcher.py`: interactive flight launcher and post-flight sync commands.
+- `agents/armada-foreman.md`: version-controlled foreman agent specification for installation on the node.
 
 ## Last 10 Changes
 
+1. `AR-003`: Added the foreman agent specification and emitted per-foreman launch prompts containing the assigned AI-ID.
 1. `AR-002`: Made Custodian MCP text responses resilient to non-JSON payloads and corrected dispatch-scoped query placeholders to use the supported parameter format.
 1. `AR-001`: Added dispatch-scoped instruction/dispatch synchronization, stamped worker instructions before foremen are created, and forwarded the dispatch ID to edge sync.
 

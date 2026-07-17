@@ -216,8 +216,8 @@ def fly(client: CustodianClient) -> None:
     for index, (foreman_id, port, count) in enumerate(foremen, start=1):
         print(f"F{index}: {foreman_id} (CDP {port}, {count} workers)")
     print("\nLaunch in separate terminals:")
-    for _ in foremen:
-        print(f"opencode --agent armada-foreman --model {FOREMAN_MODEL}")
+    for foreman_id, _, _ in foremen:
+        print(f"opencode --agent armada-foreman --model {FOREMAN_MODEL} --prompt 'Execute {foreman_id}'")
 
 
 def run_sync(flag: str, dispatch_id: str | None = None) -> dict[str, Any]:
