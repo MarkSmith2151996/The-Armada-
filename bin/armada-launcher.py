@@ -313,13 +313,29 @@ def status(client: CustodianClient) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", nargs="?", choices=("fly", "sync", "status"))
-    command = parser.parse_args().command
-    if command is None:
-        command = input("Command [fly/sync/status]: ").strip().lower()
-    if command not in {"fly", "sync", "status"}:
-        raise RuntimeError("Choose fly, sync, or status")
+    initial_command = parser.parse_args().command
     client = CustodianClient()
-    {"fly": fly, "sync": sync, "status": status}[command](client)
+    dispatch = {"fly": fly, "sync": sync, "status": status}
+    first = True
+    while True:
+        try:
+            if first and initial_command:
+                command = initial_command
+            else:
+                print()
+                command = input("Command [fly/sync/status/quit]: ").strip().lower()
+            first = False
+            if command in ("quit", "exit", "q"):
+                break
+            if command not in dispatch:
+                print("Choose fly, sync, status, or quit")
+                continue
+            dispatch[command](client)
+        except KeyboardInterrupt:
+            print()
+            break
+        except EOFError:
+            break
 
 
 if __name__ == "__main__":
