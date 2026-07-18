@@ -25,9 +25,11 @@
 - `node-mcp-server/server.py`: MCP server, durable instruction cache, and Custodian sync CLI.
 - `bin/armada-launcher.py`: interactive flight launcher and post-flight sync commands.
 - `agents/armada-foreman.md`: version-controlled foreman agent specification for installation on the node.
+- `ebay_scraper.py`: EE-646 one-shot eBay motherboard listing scraper that leases an Armada CDP port, extracts search/detail data, and writes JSON plus raw HTML debug captures.
 
 ## Last 10 Changes
 
+1. `EE-646`: Added a standalone eBay motherboard scraper proof of concept that reuses the CDP pool and writes JSON and raw search/detail HTML captures for Mac-side validation.
 1. `AR-003`: Added the foreman agent specification and emitted per-foreman launch prompts containing the assigned AI-ID.
 1. `AR-002`: Made Custodian MCP text responses resilient to non-JSON payloads and corrected dispatch-scoped query placeholders to use the supported parameter format.
 1. `AR-001`: Added dispatch-scoped instruction/dispatch synchronization, stamped worker instructions before foremen are created, and forwarded the dispatch ID to edge sync.
