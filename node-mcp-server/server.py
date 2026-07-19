@@ -27,6 +27,17 @@ store = ContextStore(settings)
 mcp = FastMCP("armada-node-mcp")
 INSTRUCTIONS_FILE = Path(__file__).parent / "instructions.json"
 _instruction_cache: dict[str, Any] | None = None
+ESCALATIONS_REMOTE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS armada_escalations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    foreman_id TEXT NOT NULL,
+    dispatch_id TEXT,
+    workers_completed TEXT,
+    workers_remaining TEXT,
+    failure_reason TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+)
+"""
 
 
 def _load_instructions() -> dict[str, Any]:
@@ -229,6 +240,73 @@ def sync_to_custodian() -> dict[str, int]:
                 ),
                 file=sys.stderr,
             )
+    escalations = edge_store.query(
+        "SELECT id, foreman_id, dispatch_id, workers_completed, workers_remaining, failure_reason, created_at "
+        "FROM escalations WHERE synced_at IS NULL ORDER BY id"
+    )
+    synced_escalations = 0
+    failed_escalations = 0
+    if escalations:
+        schema_result = call_tool(sync_settings, "armada_query", {"sql": ESCALATIONS_REMOTE_SCHEMA})
+        if not schema_result.get("ok"):
+            failed_escalations = len(escalations)
+            print(
+                json.dumps(
+                    {
+                        "sync_failure": "escalation_schema",
+                        "count": len(escalations),
+                        "error": schema_result.get("error"),
+                        "status_code": schema_result.get("status_code"),
+                        "stage": schema_result.get("stage"),
+                        "response": schema_result.get("response"),
+                    },
+                    ensure_ascii=True,
+                    default=str,
+                ),
+                file=sys.stderr,
+            )
+        else:
+            for escalation in escalations:
+                result = call_tool(
+                    sync_settings,
+                    "armada_query",
+                    {
+                        "sql": (
+                            "INSERT INTO armada_escalations "
+                            "(foreman_id, dispatch_id, workers_completed, workers_remaining, failure_reason, created_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?)"
+                        ),
+                        "params": [
+                            escalation["foreman_id"],
+                            escalation["dispatch_id"],
+                            escalation["workers_completed"],
+                            escalation["workers_remaining"],
+                            escalation["failure_reason"],
+                            escalation["created_at"],
+                        ],
+                    },
+                )
+                if result.get("ok"):
+                    edge_store.execute("UPDATE escalations SET synced_at = datetime('now') WHERE id = ?", [escalation["id"]])
+                    synced_escalations += 1
+                else:
+                    failed_escalations += 1
+                    print(
+                        json.dumps(
+                            {
+                                "sync_failure": "escalation",
+                                "escalation_id": escalation["id"],
+                                "foreman_id": escalation["foreman_id"],
+                                "error": result.get("error"),
+                                "status_code": result.get("status_code"),
+                                "stage": result.get("stage"),
+                                "response": result.get("response"),
+                            },
+                            ensure_ascii=True,
+                            default=str,
+                        ),
+                        file=sys.stderr,
+                    )
     statuses = edge_store.query(
         "SELECT id, status FROM instructions WHERE status != 'open' AND status_synced_at IS NULL ORDER BY id"
     )
@@ -268,6 +346,8 @@ def sync_to_custodian() -> dict[str, int]:
         "failed_verdicts": failed_verdicts,
         "synced_statuses": synced_statuses,
         "failed_statuses": failed_statuses,
+        "synced_escalations": synced_escalations,
+        "failed_escalations": failed_escalations,
     }
 
 
@@ -423,6 +503,56 @@ def mark_instruction_status(ai_id: str, status: str) -> dict[str, Any]:
         return {"ok": bool(row), "id": ai_id, "status": status}
     except Exception as exc:
         return {"ok": False, "error": f"Local sqld write failed: {exc}"}
+
+
+@mcp.tool()
+def armada_escalate(
+    foreman_id: str,
+    failure_reason: str,
+    dispatch_id: str = "",
+    workers_completed: list[str] | None = None,
+    workers_remaining: list[str] | None = None,
+) -> dict[str, Any]:
+    """Queue a foreman's terminal failure report in local sqld for post-flight synchronization."""
+    foreman_id = foreman_id.strip()
+    failure_reason = failure_reason.strip()
+    completed = [worker_id.strip() for worker_id in workers_completed or []]
+    remaining = [worker_id.strip() for worker_id in workers_remaining or []]
+    if not foreman_id:
+        return {"ok": False, "error": "foreman_id is required"}
+    if not failure_reason:
+        return {"ok": False, "error": "failure_reason is required"}
+    if not all(completed) or not all(remaining):
+        return {"ok": False, "error": "worker IDs must be non-empty strings"}
+
+    try:
+        edge_store = SqldStore(settings)
+        edge_store.ensure_schema()
+        edge_store.execute(
+            """
+            INSERT INTO escalations (
+                foreman_id, dispatch_id, workers_completed, workers_remaining, failure_reason
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                foreman_id,
+                dispatch_id.strip() or None,
+                json.dumps(completed, ensure_ascii=True),
+                json.dumps(remaining, ensure_ascii=True),
+                failure_reason,
+            ],
+        )
+    except Exception as exc:
+        return {"ok": False, "error": f"Local sqld write failed: {exc}"}
+
+    return {
+        "ok": True,
+        "queued_for_sync": True,
+        "foreman_id": foreman_id,
+        "dispatch_id": dispatch_id.strip() or None,
+        "workers_completed": completed,
+        "workers_remaining": remaining,
+    }
 
 
 if __name__ == "__main__":

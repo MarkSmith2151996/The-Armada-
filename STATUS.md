@@ -30,6 +30,7 @@
 
 ## Last 10 Changes
 
+1. `AR-004`: Added a read-only `diagnose` launcher command plus durable foreman escalation capture and Custodian synchronization.
 1. `EE-648`: Added a resumable eBay gallery URL collector that visits each search-result listing in a fresh CDP tab, regexes image hashes, and checkpoints both updated search JSON and image stats.
 1. `EE-647`: Replaced the eBay detail-page POC with a paced six-query, ten-page-per-query search-lake scraper that parses current `li.s-card` results and incrementally saves deduplicated JSON.
 1. `EE-646`: Added a standalone eBay motherboard scraper proof of concept that reuses the CDP pool and writes JSON and raw search/detail HTML captures for Mac-side validation.
@@ -39,4 +40,5 @@
 
 ## Known Issues
 
-- The local sqld endpoint at `127.0.0.1:8400` was unavailable during AR-001 verification, so live sync CLI calls could not reach Custodian.
+- The local sqld endpoint at `127.0.0.1:8400` remains unavailable in this WSL checkout, so live sync and escalation delivery require Mac-node verification.
+- `agents/armada-foreman.md` still permits `custodian_*`, despite AR-004 context describing node-only foremen; this pre-existing workflow mismatch was not changed by the scoped escalation work.

@@ -52,6 +52,18 @@ SCHEMA = (
         updated_at TEXT DEFAULT (datetime('now'))
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS escalations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        foreman_id TEXT NOT NULL,
+        dispatch_id TEXT,
+        workers_completed TEXT,
+        workers_remaining TEXT,
+        failure_reason TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        synced_at TEXT DEFAULT NULL
+    )
+    """,
 )
 _schema_lock = threading.Lock()
 _schema_ready = False

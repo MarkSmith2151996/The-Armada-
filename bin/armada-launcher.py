@@ -11,7 +11,7 @@ import socket
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -296,6 +296,238 @@ def cdp_port_status(port: int) -> str:
         return "down"
 
 
+def sqld_query(sql: str) -> list[dict[str, Any]]:
+    """Run a read-only sqld query through its local HTTP endpoint."""
+    response = requests.post(
+        os.environ.get("SQLD_URL", "http://127.0.0.1:8400").rstrip("/") + "/v2/pipeline",
+        json={"requests": [{"type": "execute", "stmt": {"sql": sql}}]},
+        timeout=5,
+    )
+    response.raise_for_status()
+    result = response.json().get("results", [{}])[0]
+    if result.get("type") == "error":
+        raise RuntimeError(result.get("error", {}).get("message", "sqld query failed"))
+    payload = result.get("response", {}).get("result", {})
+    columns = [column["name"] for column in payload.get("cols", [])]
+    return [dict(zip(columns, [sqld_value(value) for value in row])) for row in payload.get("rows", [])]
+
+
+def sqld_value(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    if value.get("type") == "null":
+        return None
+    raw = value.get("value")
+    if value.get("type") == "integer" and raw is not None:
+        return int(raw)
+    if value.get("type") == "float" and raw is not None:
+        return float(raw)
+    return raw
+
+
+def created_within_last_day(value: Any) -> bool:
+    if not value:
+        return False
+    try:
+        created_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return created_at >= datetime.now(timezone.utc) - timedelta(days=1)
+
+
+def serper_key_status() -> tuple[int, str]:
+    key_path = NODE_DIR / "search_keys.json"
+    try:
+        payload = json.loads(key_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return 0, f"not configured ({key_path} is missing)"
+    except (OSError, json.JSONDecodeError) as exc:
+        return 0, f"invalid configuration: {exc}"
+
+    configured = payload.get("keys", [])
+    if not isinstance(configured, list):
+        return 0, "invalid configuration: keys must be a list"
+    usable = [
+        item
+        for item in configured
+        if isinstance(item, dict) and all(isinstance(item.get(field), str) and item[field] for field in ("provider", "key", "endpoint"))
+    ]
+    if not usable:
+        return len(configured), "no usable keys"
+
+    first_key = usable[0]
+    try:
+        response = requests.get(
+            first_key["endpoint"],
+            headers={"X-API-KEY": first_key["key"]},
+            params={"q": "armada-auth-check", "num": 1},
+            timeout=5,
+        )
+    except requests.RequestException as exc:
+        return len(configured), f"test failed: {exc}"
+    if response.status_code == 200:
+        return len(configured), f"valid ({first_key['provider']}, HTTP 200)"
+    return len(configured), f"test failed ({first_key['provider']}, HTTP {response.status_code})"
+
+
+def diagnose() -> None:
+    """Print a non-mutating readiness report for an Armada flight."""
+    print("Armada flight diagnostic")
+    print(f"Generated: {datetime.now(timezone.utc):%Y-%m-%d %H:%M:%SZ}")
+
+    client: CustodianClient | None = None
+    worker_rows: list[dict[str, Any]] = []
+    foreman_rows: list[dict[str, Any]] = []
+    custodian_error = ""
+    try:
+        client = CustodianClient()
+        client.query("SELECT 1 AS ready")
+        worker_rows = client.query(
+            "SELECT id, created_at FROM agent_instructions "
+            "WHERE agent_name = 'brand-outreach-worker' AND status = 'open' ORDER BY created_at, id"
+        )
+        foreman_rows = client.query(
+            "SELECT id, created_at FROM agent_instructions "
+            "WHERE agent_name = 'armada-foreman' AND status = 'open' ORDER BY created_at, id"
+        )
+    except Exception as exc:
+        custodian_error = str(exc)
+
+    print("\nOpen workers")
+    if custodian_error:
+        print("  Unavailable: Custodian query failed")
+    else:
+        print(f"  Total: {len(worker_rows)}")
+        print(f"  Oldest: {worker_rows[0].get('created_at') if worker_rows else 'n/a'}")
+        print(f"  Newest: {worker_rows[-1].get('created_at') if worker_rows else 'n/a'}")
+        print(f"  Created in last 24h: {sum(created_within_last_day(row.get('created_at')) for row in worker_rows)}")
+
+    print("\nCustodian connectivity")
+    print(f"  MCP read query: {'OK' if not custodian_error else 'FAILED: ' + custodian_error}")
+
+    sqld_process = subprocess.run(["pgrep", "-f", "[s]qld"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    sqld_error = ""
+    sqld_reachable = False
+    sqld_total: int | None = None
+    unsynced_verdicts: int | None = None
+    local_executed: list[dict[str, Any]] = []
+    unresolved_escalations: list[dict[str, Any]] | None = None
+    try:
+        sqld_total = int(sqld_query("SELECT COUNT(*) AS count FROM instructions")[0]["count"])
+        unsynced_verdicts = int(sqld_query("SELECT COUNT(*) AS count FROM verdicts WHERE synced_at IS NULL")[0]["count"])
+        local_executed = sqld_query(
+            "SELECT id FROM instructions WHERE agent_name = 'brand-outreach-worker' AND status = 'executed'"
+        )
+        sqld_reachable = True
+        try:
+            unresolved_escalations = sqld_query(
+                "SELECT foreman_id, failure_reason, workers_remaining FROM escalations "
+                "WHERE synced_at IS NULL ORDER BY created_at"
+            )
+        except Exception:
+            unresolved_escalations = None
+    except Exception as exc:
+        sqld_error = str(exc)
+
+    print("\nsqld state")
+    print(f"  Process: {'running' if sqld_process else 'not detected'}")
+    if sqld_reachable:
+        print(f"  Instructions: {sqld_total}")
+        print(f"  Unsynced verdicts: {unsynced_verdicts}")
+    else:
+        print(f"  Query: FAILED: {sqld_error}")
+
+    cdp_ports = {port: cdp_port_status(port) for port in range(9222, 9226)}
+    print("\nCDP ports")
+    print("  " + ", ".join(f"{port} {state}" for port, state in cdp_ports.items()))
+
+    node_is_running = node_running()
+    print("\nNode MCP server")
+    print(f"  {'running' if node_is_running else 'not detected'}")
+
+    key_count, serper_status = serper_key_status()
+    serper_valid = serper_status.startswith("valid ")
+    print("\nSerper keys")
+    print(f"  Configured: {key_count}")
+    print(f"  First key: {serper_status}")
+
+    print("\nOpen foremen")
+    if custodian_error:
+        print("  Unavailable: Custodian query failed")
+    elif foreman_rows:
+        for row in foreman_rows:
+            print(f"  {row.get('id')}: {row.get('created_at')}")
+    else:
+        print("  None")
+
+    unreconciled: list[str] = []
+    if not custodian_error and sqld_reachable:
+        remote_open_ids = {str(row["id"]) for row in worker_rows}
+        unreconciled = [str(row["id"]) for row in local_executed if str(row["id"]) in remote_open_ids]
+    print("\nUnreconciled workers")
+    if custodian_error or not sqld_reachable:
+        print("  Unavailable: requires Custodian and sqld")
+    elif unreconciled:
+        print("  " + ", ".join(unreconciled))
+    else:
+        print("  None")
+
+    print("\nEscalation records")
+    if unresolved_escalations is None:
+        print("  None or table not initialized")
+    elif not unresolved_escalations:
+        print("  None")
+    else:
+        for escalation in unresolved_escalations:
+            try:
+                remaining_count = len(json.loads(escalation.get("workers_remaining") or "[]"))
+            except json.JSONDecodeError:
+                remaining_count = "unknown"
+            print(
+                f"  {escalation.get('foreman_id')}: {escalation.get('failure_reason')} "
+                f"({remaining_count} workers remaining)"
+            )
+
+    print("\nAuto-creation pipeline")
+    print("  WSL services not checkable from Mac.")
+
+    critical: list[str] = []
+    attention: list[str] = []
+    if custodian_error:
+        critical.append("Custodian connectivity failed")
+    elif not worker_rows:
+        critical.append("no open workers")
+    if not sqld_process:
+        critical.append("sqld process is not running")
+    if not sqld_reachable:
+        critical.append("sqld read query failed")
+    if not node_is_running:
+        critical.append("Node MCP server is not running")
+    down_ports = [str(port) for port, state in cdp_ports.items() if state != "listening"]
+    if down_ports:
+        critical.append("CDP ports down: " + ", ".join(down_ports))
+    if not serper_valid:
+        critical.append("Serper key validation failed")
+    if foreman_rows:
+        attention.append(f"{len(foreman_rows)} stale open foreman(s)")
+    if unsynced_verdicts:
+        attention.append(f"{unsynced_verdicts} unsynced verdict(s)")
+    if unreconciled:
+        attention.append(f"{len(unreconciled)} unreconciled worker(s)")
+    if unresolved_escalations:
+        attention.append(f"{len(unresolved_escalations)} unresolved escalation(s)")
+
+    print("\nFlight recommendation")
+    if critical:
+        print("  BLOCKED: " + "; ".join(critical))
+    elif attention:
+        print("  ATTENTION: " + "; ".join(attention))
+    else:
+        print(f"  READY: {len(worker_rows)} open workers, all systems green")
+
+
 def status(client: CustodianClient) -> None:
     worker_count = len(open_workers(client))
     foreman_rows = client.query("SELECT COUNT(*) AS count FROM agent_instructions WHERE agent_name = 'armada-foreman' AND status = 'open'")
@@ -316,10 +548,10 @@ def status(client: CustodianClient) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", nargs="?", choices=("fly", "sync", "status"))
+    parser.add_argument("command", nargs="?", choices=("fly", "sync", "status", "diagnose"))
     initial_command = parser.parse_args().command
-    client = CustodianClient()
     dispatch = {"fly": fly, "sync": sync, "status": status}
+    client: CustodianClient | None = None
     first = True
     while True:
         try:
@@ -327,13 +559,19 @@ def main() -> None:
                 command = initial_command
             else:
                 print()
-                command = input("Command [fly/sync/status/quit]: ").strip().lower()
+                command = input("Command [fly/sync/status/diagnose/quit]: ").strip().lower()
             first = False
             if command in ("quit", "exit", "q"):
                 break
-            if command not in dispatch:
-                print("Choose fly, sync, status, or quit")
+            if command == "diagnose":
+                diagnose()
+                if initial_command:
+                    return
                 continue
+            if command not in dispatch:
+                print("Choose fly, sync, status, diagnose, or quit")
+                continue
+            client = client or CustodianClient()
             dispatch[command](client)
         except KeyboardInterrupt:
             print()
