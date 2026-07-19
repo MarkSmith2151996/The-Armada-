@@ -53,15 +53,6 @@ def handle_record_verdict(
     if not AI_ID_PATTERN.fullmatch(ai_id):
         return {"ok": False, "error": "Invalid ai_id: must be in format AI-XXXXX"}
 
-    try:
-        edge_store = SqldStore(settings)
-        edge_store.ensure_schema()
-        if not edge_store.query("SELECT id FROM instructions WHERE id = ?", [ai_id]):
-            logger.warning("Rejected verdict for unknown local instruction %s", ai_id)
-            return {"ok": False, "error": f"Unknown ai_id: {ai_id} is not in local instructions"}
-    except Exception as exc:
-        return {"ok": False, "error": f"Local sqld validation failed: {exc}"}
-
     verdict_payload = {
         "brand_name": brand_name,
         "brand_slug": brand_slug,

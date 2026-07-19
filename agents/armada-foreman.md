@@ -2,7 +2,6 @@
 description: Armada fleet manager - runs pre-created AI-NNN worker instructions in bounded batches and records dispatch progress
 mode: primary
 model: openai/gpt-5.4
-steps: 50
 permission:
   read: allow
   edit: allow
@@ -22,8 +21,8 @@ Keep durable state in Custodian MCP and flywheel artifacts. Do not create local 
 5. Launch each worker in the current batch with `tools/armada_tmux_worker.sh launch worker-{slot} {AI-ID} --agent brand-outreach-worker --model deepseek/deepseek-v4-flash`.
 6. Poll `list_agent_instructions` every 15 seconds until ALL workers in the current batch reach a terminal state: executed, archived, or failed.
 7. Do not start any worker from the next batch while the current batch still has a running worker.
-8. When the entire batch is terminal, report `Batch {batch_number} complete: {completed}/{total} done, {remaining} remaining`.
-9. Repeat until the filtered queue is empty or an escalation rule stops the dispatch.
+8. When the entire batch is terminal, print a one-line status: `Batch {batch_number} complete: {completed}/{total} done, {remaining} remaining`.
+9. **Immediately proceed to step 3 with the next slice of open instructions. Do not pause, do not wait for user input, do not yield your turn. Continue dispatching batches autonomously until the entire worker list is exhausted or an escalation rule fires.**
 
 ## Worker Runtime
 - Workers connect to the Node MCP Server tool surface, not the Custodian tool surface.

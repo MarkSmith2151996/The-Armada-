@@ -26,19 +26,71 @@ from cdp_pool import ensure_initialized, pool  # noqa: E402
 EBAY_HOME_URL = "https://www.ebay.com"
 SEARCH_BASE_URL = "https://www.ebay.com/sch/i.html"
 QUERIES = (
-    "motherboard",
+    # === Original broad motherboard ===
+    "motherboard for parts",
     "motherboard bent pin",
     "motherboard damaged",
     "motherboard as-is",
     "mobo for parts",
-    "mainboard",
+    "mainboard for parts",
+    # === AM5 Motherboard/Socket ===
+    "AM5 motherboard for parts",
+    "AM5 motherboard not working",
+    "AM5 bent cpu",
+    "AM5 pins",
+    "AM5 motherboard broken",
+    "AM5 motherboard parts only",
+    # === AM5 High-end chipsets ===
+    "X870E bent",
+    "X870 bent",
+    "X670E bent",
+    "X670 bent",
+    # === AM5 Mid-range chipsets ===
+    "B650E bent",
+    "B650 bent",
+    # === AM4 CPU broad ===
+    "AM4 CPU bent pins",
+    "AM4 CPU for parts",
+    "AM4 CPU not working",
+    "AM4 Ryzen bent pins",
+    "AM4 Ryzen for parts",
+    # === Ryzen CPU general ===
+    "Ryzen bent pins",
+    "Ryzen CPU for parts",
+    "Ryzen processor bent",
+    # === Ryzen tier-specific ===
+    "Ryzen 5 bent pins",
+    "Ryzen 7 bent pins",
+    "Ryzen 9 bent pins",
+    # === High-value AMD models ===
+    "5800X3D bent",
+    "5800X3D for parts",
+    "5900X bent",
+    "5950X bent",
+    "5600X bent",
+    "5700X3D bent",
+    # === AMD pin-specific ===
+    "Ryzen CPU pins broken",
+    "Ryzen CPU pins damaged",
+    "AM4 processor pins",
+    # === Intel LGA (pins on motherboard socket) ===
+    "LGA 1700 bent pin",
+    "LGA 1700 motherboard for parts",
+    "LGA 1700 bent socket",
+    "Z790 bent pin",
+    "Z790 motherboard for parts",
+    "Z690 bent pin",
+    "Z690 motherboard for parts",
+    "B760 motherboard for parts",
+    "LGA 1200 bent pin",
+    "LGA 1200 motherboard for parts",
 )
-PAGES_PER_QUERY = 10
+PAGES_PER_QUERY = 5
 ITEMS_PER_PAGE = 240
 NAVIGATION_TIMEOUT_MS = 45_000
 POST_LOAD_WAIT_MS = 2_500
 PAGE_PACE_MS = 6_000
-RESULTS_PATH = REPO_ROOT / "ebay_scrape_results.json"
+RESULTS_PATH = REPO_ROOT / "ebay_scrape_results_v2.json"
 SEARCH_DEBUG_PATH = REPO_ROOT / "debug_search_page.html"
 EMPTY_DEBUG_PATH = REPO_ROOT / "debug_empty_page.html"
 

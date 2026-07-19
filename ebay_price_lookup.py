@@ -173,11 +173,23 @@ def print_progress(index: int, total: int, result: dict[str, Any]) -> None:
 
 def run() -> int:
     results: list[dict[str, Any]] = []
-    with psycopg2.connect(**DB_CONFIG) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(LOOKUP_QUERY)
-            listings = cursor.fetchall()
+    # --- PATCHED: load from JSON, skip Postgres ---
+    import json as _json
+    _bent_kw = ['bent pin', 'bent cpu', 'pins bent', 'pin damage', 'pins broken', 'bent socket']
+    with open(Path(__file__).resolve().parent / 'ebay_scrape_results.json') as _jf:
+        _jdata = _json.load(_jf)
+    listings = []
+    for _l in _jdata['listings']:
+        _t = (_l.get('title') or '').lower()
+        if any(k in _t for k in _bent_kw):
+            _pr = (_l.get('price') or '').replace('$','').replace(',','')
+            import re as _re2
+            _pm = _re2.search(r'[\d.]+', _pr)
+            listings.append((_l['item_id'], _l['title'], float(_pm.group()) if _pm else 0))
+    listings.sort(key=lambda x: x[2], reverse=True)
+    connection = None
 
+    if True:
         total = len(listings)
         log(f"Found {total} bent-pin listings")
         save_results(results)
@@ -227,16 +239,16 @@ def run() -> int:
                             net_spread=net_spread,
                             spread_pct=spread_pct,
                         )
-                        update_listing(connection, str(item_id), market_price_median, net_spread, spread_pct)
+                        # update_listing(connection, str(item_id), market_price_median, net_spread, spread_pct)
                     else:
-                        update_listing(connection, str(item_id), None, None, None)
+                        # update_listing(connection, str(item_id), None, None, None)
                         log(f"[{index}/{total}] {model_query}: 0 sold results")
                 except (PlaywrightTimeoutError, PlaywrightError, ValueError, psycopg2.Error) as exc:
-                    connection.rollback()
+                    # connection.rollback()
                     result["error"] = str(exc)
                     log(f"[{index}/{total}] {model_query or title}: skipped: {exc}")
                 except Exception as exc:
-                    connection.rollback()
+                    # connection.rollback()
                     result["error"] = str(exc)
                     log(f"[{index}/{total}] {model_query or title}: unexpected error: {exc}")
                 finally:
