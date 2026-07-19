@@ -352,24 +352,29 @@ def serper_key_status() -> tuple[int, str]:
     usable = [
         item
         for item in configured
-        if isinstance(item, dict) and all(isinstance(item.get(field), str) and item[field] for field in ("provider", "key", "endpoint"))
+        if isinstance(item, dict)
+        and item.get("provider") == "serper"
+        and all(isinstance(item.get(field), str) and item[field] for field in ("key", "endpoint"))
     ]
     if not usable:
-        return len(configured), "no usable keys"
+        return len(configured), "no Serper keys to test"
 
-    first_key = usable[0]
-    try:
-        response = requests.get(
-            first_key["endpoint"],
-            headers={"X-API-KEY": first_key["key"]},
-            params={"q": "armada-auth-check", "num": 1},
-            timeout=5,
-        )
-    except requests.RequestException as exc:
-        return len(configured), f"test failed: {exc}"
-    if response.status_code == 200:
-        return len(configured), f"valid ({first_key['provider']}, HTTP 200)"
-    return len(configured), f"test failed ({first_key['provider']}, HTTP {response.status_code})"
+    failures: list[str] = []
+    for index, key in enumerate(usable, start=1):
+        try:
+            response = requests.post(
+                key["endpoint"],
+                json={"q": "test", "num": 1},
+                headers={"X-API-KEY": key["key"], "Content-Type": "application/json"},
+                timeout=5,
+            )
+        except requests.RequestException as exc:
+            failures.append(str(exc))
+            continue
+        if response.status_code == 200:
+            return len(configured), f"valid (Serper key {index}/{len(usable)}, HTTP 200)"
+        failures.append(f"HTTP {response.status_code}")
+    return len(configured), f"test failed ({', '.join(failures)})"
 
 
 def diagnose() -> None:
@@ -451,7 +456,7 @@ def diagnose() -> None:
     serper_valid = serper_status.startswith("valid ")
     print("\nSerper keys")
     print(f"  Configured: {key_count}")
-    print(f"  First key: {serper_status}")
+    print(f"  Test: {serper_status}")
 
     print("\nOpen foremen")
     if custodian_error:
