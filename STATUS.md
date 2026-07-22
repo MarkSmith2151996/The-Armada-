@@ -17,7 +17,7 @@
 ## Architecture
 
 - `node-mcp-server/server.py` exposes worker tools and synchronizes instruction/dispatch state with Custodian.
-- `bin/armada-launcher.py` creates a dispatch, assigns workers to foremen, and invokes node synchronization.
+- `bin/armada-launcher.py` creates a dispatch, synchronizes `FBA_READY` workers, stamps them `dispatched`, then caches dispatch-scoped foremen.
 - `node-mcp-server/tools/` contains worker-facing tool handlers and storage clients.
 
 ## File Map
@@ -30,6 +30,7 @@
 
 ## Last 10 Changes
 
+1. `AR-006`: Scoped node synchronization by required instruction status, made FBA flights select `FBA_READY` workers and transition them to `dispatched`, and updated Custodian plus the batch producer to support readiness statuses.
 1. `AR-004`: Added a read-only `diagnose` launcher command plus durable foreman escalation capture and Custodian synchronization.
 1. `EE-648`: Added a resumable eBay gallery URL collector that visits each search-result listing in a fresh CDP tab, regexes image hashes, and checkpoints both updated search JSON and image stats.
 1. `EE-647`: Replaced the eBay detail-page POC with a paced six-query, ten-page-per-query search-lake scraper that parses current `li.s-card` results and incrementally saves deduplicated JSON.

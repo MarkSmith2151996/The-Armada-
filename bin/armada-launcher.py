@@ -144,7 +144,7 @@ def ensure_node_server() -> bool:
 def open_workers(client: CustodianClient) -> list[str]:
     rows = client.query(
         "SELECT id FROM agent_instructions "
-        "WHERE agent_name = 'brand-outreach-worker' AND status = 'open' ORDER BY id"
+        "WHERE agent_name = 'brand-outreach-worker' AND status = 'FBA_READY' ORDER BY id"
     )
     return [row["id"] for row in rows]
 
@@ -172,7 +172,7 @@ def fly(client: CustodianClient) -> None:
     if not ensure_node_server():
         print("Warning: no persistent Node MCP process was detected; sync-from-custodian still runs directly.")
     workers = open_workers(client)
-    print(f"{len(workers)} open workers ready")
+    print(f"{len(workers)} FBA-ready workers")
     if not workers:
         return
     raw_groups = input("How many foremen? [4]: ").strip() or "4"
@@ -192,12 +192,14 @@ def fly(client: CustodianClient) -> None:
         "model": FOREMAN_MODEL,
         "node_assignments": {f"F{index + 1}": len(worker_ids) for index, worker_ids in enumerate(assignments)},
     })
+    run_sync("--sync-from-custodian", instruction_type="FBA_READY")
     for start in range(0, len(workers), 100):
         worker_ids = workers[start:start + 100]
         values = ", ".join(sql_quote(worker_id) for worker_id in worker_ids)
         client.tool("armada_query", {
             "sql": "UPDATE agent_instructions SET dispatch_id = "
-            f"{sql_quote(dispatch_id)} WHERE id IN ({values})",
+            f"{sql_quote(dispatch_id)}, status = 'dispatched' "
+            f"WHERE id IN ({values}) AND status = 'FBA_READY'",
         })
     foremen: list[tuple[str, int, int]] = []
     for index, worker_ids in enumerate(assignments):
@@ -211,7 +213,7 @@ def fly(client: CustodianClient) -> None:
         if not foreman_id:
             raise RuntimeError(f"Custodian did not return a foreman ID: {result}")
         foremen.append((str(foreman_id), 9222 + index, len(worker_ids)))
-    run_sync("--sync-from-custodian", dispatch_id=dispatch_id)
+    run_sync("--sync-from-custodian", dispatch_id=dispatch_id, instruction_type="open")
     print("\nForemen created:")
     for index, (foreman_id, port, count) in enumerate(foremen, start=1):
         print(f"F{index}: {foreman_id} (CDP {port}, {count} workers)")
@@ -220,8 +222,14 @@ def fly(client: CustodianClient) -> None:
         print(f"opencode --agent armada-foreman --model {FOREMAN_MODEL} --prompt 'Execute {foreman_id}'")
 
 
-def run_sync(flag: str, dispatch_id: str | None = None) -> dict[str, Any]:
+def run_sync(
+    flag: str,
+    dispatch_id: str | None = None,
+    instruction_type: str | None = None,
+) -> dict[str, Any]:
     command = [node_python(), str(NODE_SERVER), flag]
+    if instruction_type is not None:
+        command.extend(["--type", instruction_type])
     if dispatch_id is not None:
         command.extend(["--dispatch", dispatch_id])
     result = subprocess.run(command, cwd=NODE_DIR, text=True, capture_output=True, check=False)
@@ -255,16 +263,16 @@ def mark_workers_executed(client: CustodianClient, worker_ids: list[str]) -> int
     for start in range(0, len(worker_ids), 100):
         batch = worker_ids[start:start + 100]
         values = ", ".join(sql_quote(worker_id) for worker_id in batch)
-        open_count = client.query(
+        dispatched_count = client.query(
             "SELECT COUNT(*) AS count FROM agent_instructions "
-            f"WHERE id IN ({values}) AND status = 'open'"
+            f"WHERE id IN ({values}) AND status = 'dispatched'"
         )[0]["count"]
-        if open_count:
+        if dispatched_count:
             client.tool("armada_query", {
                 "sql": "UPDATE agent_instructions SET status = 'executed', executed_at = CURRENT_TIMESTAMP "
-                f"WHERE id IN ({values}) AND status = 'open'",
+                f"WHERE id IN ({values}) AND status = 'dispatched'",
             })
-            marked += open_count
+            marked += dispatched_count
     return marked
 
 
@@ -284,7 +292,7 @@ def sync(client: CustodianClient) -> None:
     marked = mark_workers_executed(client, workers) if workers else 0
     print(f"Verdicts synced: {sync_result.get('synced_verdicts', 0)}")
     print(f"Workers marked executed: {marked}")
-    print(f"Remaining open workers: {len(open_workers(client))}")
+    print(f"Remaining FBA-ready workers: {len(open_workers(client))}")
     print(f"ACCESSIBLE artifacts: {accessible_count(client)}")
 
 
@@ -391,7 +399,7 @@ def diagnose() -> None:
         client.query("SELECT 1 AS ready")
         worker_rows = client.query(
             "SELECT id, created_at FROM agent_instructions "
-            "WHERE agent_name = 'brand-outreach-worker' AND status = 'open' ORDER BY created_at, id"
+            "WHERE agent_name = 'brand-outreach-worker' AND status = 'FBA_READY' ORDER BY created_at, id"
         )
         foreman_rows = client.query(
             "SELECT id, created_at FROM agent_instructions "
@@ -400,7 +408,7 @@ def diagnose() -> None:
     except Exception as exc:
         custodian_error = str(exc)
 
-    print("\nOpen workers")
+    print("\nFBA-ready workers")
     if custodian_error:
         print("  Unavailable: Custodian query failed")
     else:
@@ -503,7 +511,7 @@ def diagnose() -> None:
     if custodian_error:
         critical.append("Custodian connectivity failed")
     elif not worker_rows:
-        critical.append("no open workers")
+        critical.append("no FBA-ready workers")
     if not sqld_process:
         critical.append("sqld process is not running")
     if not sqld_reachable:
@@ -530,7 +538,7 @@ def diagnose() -> None:
     elif attention:
         print("  ATTENTION: " + "; ".join(attention))
     else:
-        print(f"  READY: {len(worker_rows)} open workers, all systems green")
+        print(f"  READY: {len(worker_rows)} FBA-ready workers, all systems green")
 
 
 def status(client: CustodianClient) -> None:
@@ -544,7 +552,7 @@ def status(client: CustodianClient) -> None:
     rows = artifact_counts.get("result", artifact_counts).get("rows", [])
     counts = {row["status"]: row["count"] for row in rows}
     print("Armada status")
-    print(f"Open workers: {worker_count}")
+    print(f"FBA-ready workers: {worker_count}")
     print(f"Open foremen: {foreman_rows[0]['count']}")
     print("Artifacts: " + ", ".join(f"{name}={counts.get(name, 0)}" for name in ("ACCESSIBLE", "MAYBE", "INCONCLUSIVE")))
     print(f"Node MCP: {'running' if node_running() else 'not detected'}")

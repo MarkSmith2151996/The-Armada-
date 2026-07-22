@@ -79,43 +79,48 @@ def _batches(items: list[tuple[str, list[Any]]], size: int = 100) -> list[list[t
     return [items[index : index + size] for index in range(0, len(items), size)]
 
 
-def sync_from_custodian(dispatch_id: str | None = None) -> dict[str, int]:
+def sync_from_custodian(instruction_type: str, dispatch_id: str | None = None) -> dict[str, int]:
+    instruction_type = instruction_type.strip()
+    if not instruction_type:
+        raise ValueError("--type is required for --sync-from-custodian")
+
     edge_store = SqldStore(settings)
     edge_store.ensure_schema()
+    params: list[Any] = [instruction_type]
+    dispatch_clause = ""
+    if dispatch_id is not None:
+        dispatch_clause = " AND dispatch_id = ?"
+        params.append(dispatch_id)
+
+    workers = _custodian_rows(
+        "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
+        "FROM agent_instructions WHERE status = ? AND agent_name != 'armada-foreman'"
+        f"{dispatch_clause} ORDER BY id",
+        params,
+    )
+    foremen = _custodian_rows(
+        "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
+        "FROM agent_instructions WHERE status = ? AND agent_name = 'armada-foreman'"
+        f"{dispatch_clause} ORDER BY id",
+        params,
+    )
     if dispatch_id is None:
-        workers = _custodian_rows(
-            "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
-            "FROM agent_instructions WHERE status = 'open' AND agent_name != 'armada-foreman' ORDER BY id"
-        )
-        foremen = _custodian_rows(
-            "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
-            "FROM agent_instructions WHERE status = 'open' AND agent_name = 'armada-foreman' ORDER BY id"
-        )
         dispatches = _custodian_rows(
             "SELECT dispatch_id, total_instructions, completed, failed, status, created_at FROM armada_dispatches ORDER BY dispatch_id"
         )
         local_open_workers = edge_store.query(
-            "SELECT id FROM instructions WHERE status = 'open' AND agent_name != 'armada-foreman'"
+            "SELECT id FROM instructions WHERE status = ? AND agent_name != 'armada-foreman'",
+            [instruction_type],
         )
     else:
-        workers = _custodian_rows(
-            "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
-            "FROM agent_instructions WHERE status = 'open' AND agent_name != 'armada-foreman' AND dispatch_id = ? ORDER BY id",
-            [dispatch_id],
-        )
-        foremen = _custodian_rows(
-            "SELECT id, agent_name, instruction_body, status, dispatch_id, created_at "
-            "FROM agent_instructions WHERE status = 'open' AND agent_name = 'armada-foreman' AND dispatch_id = ? ORDER BY id",
-            [dispatch_id],
-        )
         dispatches = _custodian_rows(
             "SELECT dispatch_id, total_instructions, completed, failed, status, created_at "
             "FROM armada_dispatches WHERE dispatch_id = ?",
             [dispatch_id],
         )
         local_open_workers = edge_store.query(
-            "SELECT id FROM instructions WHERE status = 'open' AND agent_name != 'armada-foreman' AND dispatch_id = ?",
-            [dispatch_id],
+            "SELECT id FROM instructions WHERE status = ? AND agent_name != 'armada-foreman' AND dispatch_id = ?",
+            [instruction_type, dispatch_id],
         )
     remote_worker_ids = {instruction["id"] for instruction in workers}
     stale_worker_ids = [row["id"] for row in local_open_workers if row["id"] not in remote_worker_ids]
@@ -567,9 +572,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--port", type=int, default=8401)
     parser.add_argument("--dispatch", help="sync only instructions and dispatch metadata for this dispatch ID")
+    parser.add_argument("--type", dest="instruction_type", help="instruction status to synchronize")
     args = parser.parse_args()
     if args.sync_from_custodian:
-        print(json.dumps(sync_from_custodian(dispatch_id=args.dispatch), sort_keys=True))
+        if not args.instruction_type:
+            parser.error("--type is required with --sync-from-custodian")
+        print(json.dumps(sync_from_custodian(args.instruction_type, dispatch_id=args.dispatch), sort_keys=True))
     elif args.sync_to_custodian:
         print(json.dumps(sync_to_custodian(), sort_keys=True))
     elif args.daemon:
